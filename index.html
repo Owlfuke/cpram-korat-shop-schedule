@@ -6963,14 +6963,16 @@ function calculateAndRenderSCurve() {
 // ==============================================================================
 const STORAGE_SUPABASE_URL = 'cpram_supabase_url_v1';
 const STORAGE_SUPABASE_KEY = 'cpram_supabase_key_v1';
+const DEFAULT_SUPABASE_URL = 'https://nftdgrjrqtjaqbqevemg.supabase.co';
+const DEFAULT_SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5mdGRncmpycXRqYXFicWV2ZW1nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5NTkzNzYsImV4cCI6MjEwNTUzNTM3Nn0.uh_M818SzVLoI5mUpLJx_jqBZW_SIzaLzBXfxxnckcw';
 
 let supabaseClient = null;
 let realtimeChannel = null;
 let isCloudConnected = false;
 
 function openCloudModal() {
-  const savedUrl = localStorage.getItem(STORAGE_SUPABASE_URL) || '';
-  const savedKey = localStorage.getItem(STORAGE_SUPABASE_KEY) || '';
+  const savedUrl = localStorage.getItem(STORAGE_SUPABASE_URL) || DEFAULT_SUPABASE_URL;
+  const savedKey = localStorage.getItem(STORAGE_SUPABASE_KEY) || DEFAULT_SUPABASE_KEY;
   document.getElementById('cfg-supabase-url').value = savedUrl;
   document.getElementById('cfg-supabase-key').value = savedKey;
 
@@ -7053,8 +7055,8 @@ function updateCloudStatusUI(status, errorMsg = '') {
 }
 
 function initSupabase() {
-  const savedUrl = (localStorage.getItem(STORAGE_SUPABASE_URL) || '').trim();
-  const savedKey = (localStorage.getItem(STORAGE_SUPABASE_KEY) || '').trim();
+  const savedUrl = (localStorage.getItem(STORAGE_SUPABASE_URL) || DEFAULT_SUPABASE_URL).trim();
+  const savedKey = (localStorage.getItem(STORAGE_SUPABASE_KEY) || DEFAULT_SUPABASE_KEY).trim();
 
   if (savedUrl && savedKey && window.supabase) {
     try {
