@@ -2715,6 +2715,9 @@
         <span id="cloud-status-dot" class="status-dot dot-offline"></span>
         <span id="cloud-status-text">☁️ Cloud Sync (ออฟไลน์)</span>
       </button>
+      <button class="btn-tool" id="btn-quick-push-cloud" style="background:#ecfdf5; color:#047857; border-color:#6ee7b7; font-weight:700;" onclick="pushLocalToCloud()" title="อัปเดตข้อมูลบน Cloud ให้ตรงกับหน้าจอปัจจุบันเท่านั้น (ลบรายการเก่าที่ไม่มีในหน้าจอออก ไม่นำมายำรวมกัน)">
+        <span>🔄</span> Sync หน้าจอขึ้น Cloud
+      </button>
       <button class="btn-tool btn-dashboard" onclick="openProgressModal()" title="เปิดหน้าต่าง S-Curve Dashboard วิเคราะห์ความคืบหน้า (รายวัน/สัปดาห์/เดือน)">
         <span>📊</span> S-Curve Dashboard
       </button>
@@ -3141,13 +3144,14 @@
 
       <!-- Two-way Sync Utilities -->
       <div id="cloud-sync-actions" style="display:none; padding:10px 12px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; margin-bottom:12px;">
-        <div style="font-size:11px; font-weight:700; color:#166534; margin-bottom:6px;">🔄 ซิงค์ข้อมูลระหว่างเครื่องกับ Cloud:</div>
+        <div style="font-size:11px; font-weight:700; color:#166534; margin-bottom:4px;">🔄 ซิงค์ข้อมูลแบบตรงตามหน้าจอ 100% (ไม่นำข้อมูลเก่ามายำรวมกัน):</div>
+        <div style="font-size:10px; color:#15803d; margin-bottom:8px;">• กด <b>อัปเดตหน้าจอนี้ขึ้น Cloud</b> เพื่อยึดข้อมูลบนหน้าจอปัจจุบันเป็นหลัก และล้าง Record เก่าที่ค้างใน Cloud ออก</div>
         <div style="display:flex; gap:8px;">
-          <button class="btn-tool" style="background:white; color:#15803d; border-color:#86efac; font-size:10.5px; flex:1; justify-content:center;" onclick="pushLocalToCloud()">
-            ⬆️ ส่งข้อมูลในเครื่องขึ้น Cloud (Push)
+          <button class="btn-tool" style="background:#16a34a; color:white; border-color:#15803d; font-size:10.5px; font-weight:700; flex:1; justify-content:center;" onclick="pushLocalToCloud()">
+            ⬆️ อัปเดตหน้าจอนี้ขึ้น Cloud (ยึดหน้าจอปัจจุบัน)
           </button>
           <button class="btn-tool" style="background:white; color:#0369a1; border-color:#7dd3fc; font-size:10.5px; flex:1; justify-content:center;" onclick="pullCloudToLocal(false)">
-            ⬇️ ดึงข้อมูลจาก Cloud ลงเครื่อง (Pull)
+            ⬇️ ดึงจาก Cloud มาแทนที่หน้าจอ
           </button>
         </div>
       </div>
@@ -4440,6 +4444,7 @@ function resetSingleDrawing(dwgNo) {
     delete map[dwgNo];
     localStorage.setItem(STORAGE_CUSTOM_DATES, JSON.stringify(map));
     updateSchedule();
+    syncDrawingToCloud(dwgNo);
     showToast(`↺ คืนค่าแผนงานตามสูตร: ${dwgNo}`);
   } catch (e) {}
 }
@@ -4570,23 +4575,41 @@ function saveNewSubDrawing() {
   showToast(`💾 เพิ่มแบบย่อย [${dwgNo}] สำเร็จเรียบร้อย`);
 }
 
-function confirmDeleteSubDrawing(targetId) {
+async function confirmDeleteSubDrawing(targetId) {
   if (confirm(`คุณต้องการลบแบบย่อยรายการนี้ [${targetId}] ออกจากระบบใช่หรือไม่?`)) {
     let list = getStoredSubDrawings();
-    list = list.filter(s => s.id !== targetId && s.dwg_no !== targetId);
+    const removedSubs = list.filter(s => s.id === targetId || s.sub_id === targetId || s.dwg_no === targetId);
+    const removeKeys = new Set([targetId, ...removedSubs.map(s => s.dwg_no), ...removedSubs.map(s => s.id || s.sub_id).filter(Boolean)]);
+    list = list.filter(s => !removeKeys.has(s.id) && !removeKeys.has(s.sub_id) && !removeKeys.has(s.dwg_no));
     saveStoredSubDrawings(list);
-    try {
-      localStorage.removeItem('cpram_custom_' + targetId);
-      localStorage.removeItem('cpram_prog_' + targetId);
-      localStorage.removeItem('cpram_act_' + targetId);
-      localStorage.removeItem('cpram_sp_' + targetId);
-    } catch (e) {}
+
+    // Clean from all localStorage maps so no orphan records remain
+    [STORAGE_CUSTOM_DATES, STORAGE_PROGRESS, STORAGE_ACTUAL_DATES, STORAGE_RESPONSIBLE, STORAGE_SHAREPOINT].forEach(storageKey => {
+      try {
+        const m = JSON.parse(localStorage.getItem(storageKey) || '{}');
+        let changed = false;
+        removeKeys.forEach(k => { if (m[k] !== undefined) { delete m[k]; changed = true; } });
+        if (changed) localStorage.setItem(storageKey, JSON.stringify(m));
+      } catch (e) {}
+    });
+
+    // Immediately delete from Supabase Cloud (both cpram_sub_drawings and cpram_drawings)
+    if (supabaseClient && isCloudConnected) {
+      for (const k of removeKeys) {
+        try {
+          await supabaseClient.from('cpram_sub_drawings').delete().eq('sub_id', k);
+          await supabaseClient.from('cpram_sub_drawings').delete().eq('dwg_no', k);
+          await supabaseClient.from('cpram_drawings').delete().eq('dwg_no', k);
+        } catch (e) {}
+      }
+    }
+
     updateSchedule();
     if (document.getElementById('sub-drawing-modal') && document.getElementById('sub-drawing-modal').style.display === 'flex') {
       renderExistingSubsList();
     }
     closeEditModal();
-    showToast(`🗑️ ลบแบบย่อย [${targetId}] เรียบร้อยแล้ว`);
+    showToast(`🗑️ ลบแบบย่อย [${targetId}] ออกจากหน้าจอและ Cloud เรียบร้อยแล้ว`);
   }
 }
 
@@ -7170,7 +7193,10 @@ function disconnectCloud() {
 }
 
 // Remote Incoming Event Handlers
+let isBulkSyncInProgress = false;
+
 function handleRemoteDrawingChange(payload) {
+  if (isBulkSyncInProgress) return;
   const { eventType, new: newRec, old: oldRec } = payload;
   if (!newRec && eventType !== 'DELETE') return;
 
@@ -7184,64 +7210,71 @@ function handleRemoteDrawingChange(payload) {
   }
 
   if (eventType === 'DELETE') {
-    const allCustom = JSON.parse(localStorage.getItem(STORAGE_CUSTOM_DATES) || '{}');
-    delete allCustom[dwgNo];
-    localStorage.setItem(STORAGE_CUSTOM_DATES, JSON.stringify(allCustom));
+    [STORAGE_CUSTOM_DATES, STORAGE_PROGRESS, STORAGE_ACTUAL_DATES, STORAGE_RESPONSIBLE, STORAGE_SHAREPOINT].forEach(storageKey => {
+      try {
+        const m = JSON.parse(localStorage.getItem(storageKey) || '{}');
+        if (m[dwgNo] !== undefined) {
+          delete m[dwgNo];
+          localStorage.setItem(storageKey, JSON.stringify(m));
+        }
+      } catch (e) {}
+    });
     updateSchedule();
     return;
   }
 
-  // Update Custom Dates
-  if (newRec.submit_date || newRec.draft_days || newRec.appr_days) {
-    const allCustom = JSON.parse(localStorage.getItem(STORAGE_CUSTOM_DATES) || '{}');
+  // Update Custom Dates (only if non-default)
+  const allCustom = JSON.parse(localStorage.getItem(STORAGE_CUSTOM_DATES) || '{}');
+  const hasCustomDate = Boolean(newRec.submit_date || (newRec.draft_days && newRec.draft_days !== 4) || (newRec.appr_days && newRec.appr_days !== 4));
+  if (hasCustomDate) {
     if (!allCustom[dwgNo]) allCustom[dwgNo] = {};
     if (newRec.submit_date) allCustom[dwgNo].submitDate = newRec.submit_date;
+    else delete allCustom[dwgNo].submitDate;
     if (newRec.draft_days) allCustom[dwgNo].draftDays = newRec.draft_days;
     if (newRec.appr_days) allCustom[dwgNo].apprDays = newRec.appr_days;
-    localStorage.setItem(STORAGE_CUSTOM_DATES, JSON.stringify(allCustom));
+  } else {
+    delete allCustom[dwgNo];
   }
+  localStorage.setItem(STORAGE_CUSTOM_DATES, JSON.stringify(allCustom));
 
   // Update Actual Date
-  if (newRec.actual_date !== undefined) {
-    const allAct = JSON.parse(localStorage.getItem(STORAGE_ACTUAL_DATES) || '{}');
-    if (newRec.actual_date) allAct[dwgNo] = newRec.actual_date;
-    else delete allAct[dwgNo];
-    localStorage.setItem(STORAGE_ACTUAL_DATES, JSON.stringify(allAct));
-  }
+  const allAct = JSON.parse(localStorage.getItem(STORAGE_ACTUAL_DATES) || '{}');
+  if (newRec.actual_date) allAct[dwgNo] = newRec.actual_date;
+  else delete allAct[dwgNo];
+  localStorage.setItem(STORAGE_ACTUAL_DATES, JSON.stringify(allAct));
 
   // Update Progress
-  if (newRec.progress !== undefined && newRec.progress !== null) {
-    const allProg = JSON.parse(localStorage.getItem(STORAGE_PROGRESS) || '{}');
-    allProg[dwgNo] = parseInt(newRec.progress) || 0;
-    localStorage.setItem(STORAGE_PROGRESS, JSON.stringify(allProg));
-  }
+  const allProg = JSON.parse(localStorage.getItem(STORAGE_PROGRESS) || '{}');
+  const pVal = parseInt(newRec.progress) || 0;
+  if (pVal > 0) allProg[dwgNo] = pVal;
+  else delete allProg[dwgNo];
+  localStorage.setItem(STORAGE_PROGRESS, JSON.stringify(allProg));
 
   // Update Responsible
-  if (newRec.responsible !== undefined && newRec.responsible !== null) {
-    const allResp = JSON.parse(localStorage.getItem(STORAGE_RESPONSIBLE) || '{}');
-    allResp[dwgNo] = newRec.responsible;
-    localStorage.setItem(STORAGE_RESPONSIBLE, JSON.stringify(allResp));
-  }
+  const allResp = JSON.parse(localStorage.getItem(STORAGE_RESPONSIBLE) || '{}');
+  if (newRec.responsible) allResp[dwgNo] = newRec.responsible;
+  else delete allResp[dwgNo];
+  localStorage.setItem(STORAGE_RESPONSIBLE, JSON.stringify(allResp));
 
   // Update SharePoint
-  if (newRec.sharepoint !== undefined && newRec.sharepoint !== null) {
-    const allSp = JSON.parse(localStorage.getItem(STORAGE_SHAREPOINT) || '{}');
-    allSp[dwgNo] = newRec.sharepoint;
-    localStorage.setItem(STORAGE_SHAREPOINT, JSON.stringify(allSp));
-  }
+  const allSp = JSON.parse(localStorage.getItem(STORAGE_SHAREPOINT) || '{}');
+  if (newRec.sharepoint) allSp[dwgNo] = newRec.sharepoint;
+  else delete allSp[dwgNo];
+  localStorage.setItem(STORAGE_SHAREPOINT, JSON.stringify(allSp));
 
   updateSchedule();
   showToast(`⚡ ซิงค์ข้อมูลสด [${dwgNo}] จาก Cloud เรียบร้อยแล้ว`);
 }
 
 function handleRemoteSubDrawingChange(payload) {
+  if (isBulkSyncInProgress) return;
   const { eventType, new: newRec, old: oldRec } = payload;
   let subs = getStoredSubDrawings();
 
   if (eventType === 'DELETE') {
     const subId = oldRec ? (oldRec.sub_id || oldRec.dwg_no) : null;
     if (subId) {
-      subs = subs.filter(s => (s.sub_id || s.dwg_no) !== subId);
+      subs = subs.filter(s => (s.id || s.sub_id || s.dwg_no) !== subId && s.dwg_no !== subId);
       localStorage.setItem(STORAGE_SUB_DRAWINGS, JSON.stringify(subs));
       updateSchedule();
     }
@@ -7250,9 +7283,10 @@ function handleRemoteSubDrawingChange(payload) {
 
   if (!newRec) return;
   const subId = newRec.sub_id || newRec.dwg_no;
-  const idx = subs.findIndex(s => (s.sub_id || s.dwg_no) === subId);
+  const idx = subs.findIndex(s => (s.id || s.sub_id || s.dwg_no) === subId || s.dwg_no === newRec.dwg_no);
 
   const subObj = {
+    id: subId,
     sub_id: subId,
     parent_dwg_no: newRec.parent_dwg_no || '',
     master_ref: newRec.master_ref || 22,
@@ -7267,7 +7301,8 @@ function handleRemoteSubDrawingChange(payload) {
     appr_days: newRec.appr_days || 4,
     actual_date: newRec.actual_date || '',
     progress: newRec.progress || 0,
-    sharepoint: newRec.sharepoint || ''
+    sharepoint: newRec.sharepoint || '',
+    is_sub: true
   };
 
   if (idx >= 0) {
@@ -7291,19 +7326,28 @@ async function syncDrawingToCloud(dwgNo) {
   const resp = getStoredResponsible(dwgNo, '') || '';
   const sp = getStoredSharepoint(dwgNo) || '';
 
-  const record = {
-    dwg_no: dwgNo,
-    submit_date: custom.submitDate || null,
-    draft_days: custom.draftDays || 4,
-    appr_days: custom.apprDays || 4,
-    actual_date: actDate || null,
-    progress: prog,
-    responsible: resp || null,
-    sharepoint: sp || null,
-    updated_at: new Date().toISOString()
-  };
+  const hasCustomDate = Boolean(custom.submitDate || (custom.draftDays && custom.draftDays !== 4) || (custom.apprDays && custom.apprDays !== 4));
+  const isDefaultEmpty = !hasCustomDate && (!prog || prog <= 0) && !actDate && !resp && !sp;
 
   try {
+    if (isDefaultEmpty) {
+      // Remove record from Cloud when reset/cleared on screen so old records never pile up
+      await supabaseClient.from('cpram_drawings').delete().eq('dwg_no', dwgNo);
+      return;
+    }
+
+    const record = {
+      dwg_no: dwgNo,
+      submit_date: custom.submitDate || null,
+      draft_days: custom.draftDays || 4,
+      appr_days: custom.apprDays || 4,
+      actual_date: actDate || null,
+      progress: prog,
+      responsible: resp || null,
+      sharepoint: sp || null,
+      updated_at: new Date().toISOString()
+    };
+
     const { error } = await supabaseClient.from('cpram_drawings').upsert(record);
     if (error) console.error('Cloud sync error for', dwgNo, error);
   } catch (err) {
@@ -7314,7 +7358,7 @@ async function syncDrawingToCloud(dwgNo) {
 async function syncSubDrawingToCloud(sub) {
   if (!supabaseClient || !isCloudConnected) return;
   const record = {
-    sub_id: sub.sub_id || sub.dwg_no,
+    sub_id: sub.sub_id || sub.id || sub.dwg_no,
     parent_dwg_no: sub.parent_dwg_no || null,
     master_ref: sub.master_ref || null,
     dwg_no: sub.dwg_no,
@@ -7338,19 +7382,49 @@ async function syncSubDrawingToCloud(sub) {
   }
 }
 
-// Bulk Sync: Push Local to Cloud
+// Helper: Purge any orphan keys in localStorage that are not currently on screen
+function sanitizeLocalScreenStorage() {
+  const subs = getStoredSubDrawings();
+  const validDwgs = new Set([
+    ...RAW_DATA.drawings.map(d => d.dwg_no),
+    ...subs.map(s => s.dwg_no)
+  ]);
+
+  const cleanMap = (storageKey, validatorFn) => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(storageKey) || '{}');
+      const cleaned = {};
+      Object.keys(raw).forEach(k => {
+        if (validDwgs.has(k) && (!validatorFn || validatorFn(raw[k]))) {
+          cleaned[k] = raw[k];
+        }
+      });
+      localStorage.setItem(storageKey, JSON.stringify(cleaned));
+      return cleaned;
+    } catch (e) {
+      return {};
+    }
+  };
+
+  const allCustom = cleanMap(STORAGE_CUSTOM_DATES, v => v && (v.submitDate || (v.draftDays && v.draftDays !== 4) || (v.apprDays && v.apprDays !== 4)));
+  const allProg = cleanMap(STORAGE_PROGRESS, v => (parseInt(v) || 0) > 0);
+  const allAct = cleanMap(STORAGE_ACTUAL_DATES, v => Boolean(v));
+  const allResp = cleanMap(STORAGE_RESPONSIBLE, v => Boolean(v));
+  const allSp = cleanMap(STORAGE_SHAREPOINT, v => Boolean(v));
+
+  return { subs, validDwgs, allCustom, allProg, allAct, allResp, allSp };
+}
+
+// Bulk Sync: Push Local Screen State to Cloud (100% Exact Screen Snapshot - Wipes Stale Cloud Records)
 async function pushLocalToCloud() {
   if (!supabaseClient || !isCloudConnected) {
     alert('กรุณาเชื่อมต่อ Supabase ให้เรียบร้อยก่อน');
     return;
   }
 
+  isBulkSyncInProgress = true;
   try {
-    const allCustom = JSON.parse(localStorage.getItem(STORAGE_CUSTOM_DATES) || '{}');
-    const allProg = JSON.parse(localStorage.getItem(STORAGE_PROGRESS) || '{}');
-    const allAct = JSON.parse(localStorage.getItem(STORAGE_ACTUAL_DATES) || '{}');
-    const allResp = JSON.parse(localStorage.getItem(STORAGE_RESPONSIBLE) || '{}');
-    const allSp = JSON.parse(localStorage.getItem(STORAGE_SHAREPOINT) || '{}');
+    const { subs, allCustom, allProg, allAct, allResp, allSp } = sanitizeLocalScreenStorage();
 
     const touchedDwgs = new Set([
       ...Object.keys(allCustom),
@@ -7360,6 +7434,7 @@ async function pushLocalToCloud() {
       ...Object.keys(allSp)
     ]);
 
+    const nowIso = new Date().toISOString();
     const records = [];
     touchedDwgs.forEach(dwgNo => {
       const cst = allCustom[dwgNo] || {};
@@ -7369,10 +7444,10 @@ async function pushLocalToCloud() {
         draft_days: cst.draftDays || 4,
         appr_days: cst.apprDays || 4,
         actual_date: allAct[dwgNo] || null,
-        progress: allProg[dwgNo] !== undefined ? allProg[dwgNo] : 0,
+        progress: allProg[dwgNo] !== undefined ? (parseInt(allProg[dwgNo]) || 0) : 0,
         responsible: allResp[dwgNo] || null,
         sharepoint: allSp[dwgNo] || null,
-        updated_at: new Date().toISOString()
+        updated_at: nowIso
       });
     });
 
@@ -7384,18 +7459,26 @@ async function pushLocalToCloud() {
         mode: currentTaskLinkMode,
         masterSort: currentMasterSortMode
       }),
-      updated_at: new Date().toISOString()
+      updated_at: nowIso
     });
+
+    // 1. Delete ALL old records in cpram_drawings on Cloud first so no past records get mixed in
+    const { error: delDwgErr } = await supabaseClient.from('cpram_drawings').delete().neq('dwg_no', '__NEVER_MATCH__');
+    if (delDwgErr) console.warn('Delete old cloud drawings warning:', delDwgErr);
+
+    // 2. Insert ONLY the current screen's active records
     if (records.length > 0) {
       const { error } = await supabaseClient.from('cpram_drawings').upsert(records);
       if (error) throw error;
     }
 
-    // Push sub-drawings
-    const subs = getStoredSubDrawings();
+    // 3. Delete ALL old sub-drawings in cpram_sub_drawings on Cloud first, then insert ONLY current screen's sub-drawings
+    const { error: delSubErr } = await supabaseClient.from('cpram_sub_drawings').delete().neq('sub_id', '__NEVER_MATCH__');
+    if (delSubErr) console.warn('Delete old cloud sub-drawings warning:', delSubErr);
+
     if (subs.length > 0) {
       const subRecords = subs.map(s => ({
-        sub_id: s.sub_id || s.dwg_no,
+        sub_id: s.sub_id || s.id || s.dwg_no,
         parent_dwg_no: s.parent_dwg_no || null,
         master_ref: s.master_ref || null,
         dwg_no: s.dwg_no,
@@ -7410,83 +7493,98 @@ async function pushLocalToCloud() {
         actual_date: s.actual_date || null,
         progress: s.progress || 0,
         sharepoint: s.sharepoint || '',
-        updated_at: new Date().toISOString()
+        updated_at: nowIso
       }));
       const { error: subErr } = await supabaseClient.from('cpram_sub_drawings').upsert(subRecords);
       if (subErr) throw subErr;
     }
 
-    showToast(`☁️ ส่งข้อมูลขึ้น Cloud เรียบร้อยแล้ว (${records.length} แบบ, ${subs.length} แบบย่อย)`);
+    updateSchedule();
+    showToast(`☁️ อัปเดต Cloud ตามหน้าจอปัจจุบัน 100% เรียบร้อย (${records.length - 1} แบบที่มีข้อมูล, ${subs.length} แบบย่อย)`);
   } catch (err) {
     alert('เกิดข้อผิดพลาดในการส่งข้อมูล: ' + err.message);
+  } finally {
+    isBulkSyncInProgress = false;
   }
 }
 
-// Bulk Sync: Pull Cloud to Local
+// Bulk Sync: Pull Cloud to Local (100% Exact Replace - Never Merges With Old Local Records)
 async function pullCloudToLocal(silent = false) {
   if (!supabaseClient || !isCloudConnected) return;
 
   try {
+    // 1. Pull sub-drawings first and completely replace local sub-drawings (even if empty [])
+    const { data: subs, error: subErr } = await supabaseClient.from('cpram_sub_drawings').select('*');
+    if (subErr) throw subErr;
+
+    const subList = (subs || []).map(s => ({
+      id: s.sub_id || s.dwg_no,
+      sub_id: s.sub_id || s.dwg_no,
+      parent_dwg_no: s.parent_dwg_no || '',
+      master_ref: s.master_ref || 22,
+      dwg_no: s.dwg_no,
+      title: s.title,
+      discipline: s.discipline || 'STR',
+      bldg: s.bldg || '',
+      scale: s.scale || 'N.T.S.',
+      responsible: s.responsible || '',
+      plan_submit: s.plan_submit || '',
+      draft_days: s.draft_days || 4,
+      appr_days: s.appr_days || 4,
+      actual_date: s.actual_date || '',
+      progress: s.progress || 0,
+      sharepoint: s.sharepoint || '',
+      is_sub: true
+    }));
+    localStorage.setItem(STORAGE_SUB_DRAWINGS, JSON.stringify(subList));
+
+    const validDwgs = new Set([
+      ...RAW_DATA.drawings.map(d => d.dwg_no),
+      ...subList.map(s => s.dwg_no)
+    ]);
+
+    // 2. Pull drawings and replace local storage cleanly (start from empty objects {}, never merge with old local data)
     const { data: dwgs, error: dwgErr } = await supabaseClient.from('cpram_drawings').select('*');
     if (dwgErr) throw dwgErr;
 
-    if (dwgs && dwgs.length > 0) {
-      const allCustom = JSON.parse(localStorage.getItem(STORAGE_CUSTOM_DATES) || '{}');
-      const allProg = JSON.parse(localStorage.getItem(STORAGE_PROGRESS) || '{}');
-      const allAct = JSON.parse(localStorage.getItem(STORAGE_ACTUAL_DATES) || '{}');
-      const allResp = JSON.parse(localStorage.getItem(STORAGE_RESPONSIBLE) || '{}');
-      const allSp = JSON.parse(localStorage.getItem(STORAGE_SHAREPOINT) || '{}');
+    const allCustom = {};
+    const allProg = {};
+    const allAct = {};
+    const allResp = {};
+    const allSp = {};
 
-      dwgs.forEach(d => {
-        if (d.dwg_no === '__TASK_CONFIG_V36__') {
-          if (d.sharepoint) applyRemoteTaskConfigJson(d.sharepoint, false);
-          return;
-        }
-        if (d.submit_date || d.draft_days || d.appr_days) {
-          if (!allCustom[d.dwg_no]) allCustom[d.dwg_no] = {};
-          if (d.submit_date) allCustom[d.dwg_no].submitDate = d.submit_date;
-          if (d.draft_days) allCustom[d.dwg_no].draftDays = d.draft_days;
-          if (d.appr_days) allCustom[d.dwg_no].apprDays = d.appr_days;
-        }
-        if (d.actual_date) allAct[d.dwg_no] = d.actual_date;
-        if (d.progress !== null && d.progress !== undefined) allProg[d.dwg_no] = d.progress;
-        if (d.responsible) allResp[d.dwg_no] = d.responsible;
-        if (d.sharepoint) allSp[d.dwg_no] = d.sharepoint;
-      });
+    (dwgs || []).forEach(d => {
+      if (d.dwg_no === '__TASK_CONFIG_V36__') {
+        if (d.sharepoint) applyRemoteTaskConfigJson(d.sharepoint, false);
+        return;
+      }
+      // Ignore any orphan record that does not belong to current valid drawings on screen
+      if (!validDwgs.has(d.dwg_no)) return;
 
-      localStorage.setItem(STORAGE_CUSTOM_DATES, JSON.stringify(allCustom));
-      localStorage.setItem(STORAGE_PROGRESS, JSON.stringify(allProg));
-      localStorage.setItem(STORAGE_ACTUAL_DATES, JSON.stringify(allAct));
-      localStorage.setItem(STORAGE_RESPONSIBLE, JSON.stringify(allResp));
-      localStorage.setItem(STORAGE_SHAREPOINT, JSON.stringify(allSp));
-    }
+      const hasCustomDate = Boolean(d.submit_date || (d.draft_days && d.draft_days !== 4) || (d.appr_days && d.appr_days !== 4));
+      if (hasCustomDate) {
+        allCustom[d.dwg_no] = {};
+        if (d.submit_date) allCustom[d.dwg_no].submitDate = d.submit_date;
+        if (d.draft_days) allCustom[d.dwg_no].draftDays = d.draft_days;
+        if (d.appr_days) allCustom[d.dwg_no].apprDays = d.appr_days;
+      }
+      if (d.actual_date) allAct[d.dwg_no] = d.actual_date;
+      if (d.progress !== null && d.progress !== undefined && (parseInt(d.progress) || 0) > 0) {
+        allProg[d.dwg_no] = parseInt(d.progress) || 0;
+      }
+      if (d.responsible) allResp[d.dwg_no] = d.responsible;
+      if (d.sharepoint) allSp[d.dwg_no] = d.sharepoint;
+    });
 
-    // Pull sub drawings
-    const { data: subs, error: subErr } = await supabaseClient.from('cpram_sub_drawings').select('*');
-    if (!subErr && subs && subs.length > 0) {
-      const subList = subs.map(s => ({
-        sub_id: s.sub_id || s.dwg_no,
-        parent_dwg_no: s.parent_dwg_no || '',
-        master_ref: s.master_ref || 22,
-        dwg_no: s.dwg_no,
-        title: s.title,
-        discipline: s.discipline || 'STR',
-        bldg: s.bldg || '',
-        scale: s.scale || 'N.T.S.',
-        responsible: s.responsible || '',
-        plan_submit: s.plan_submit || '',
-        draft_days: s.draft_days || 4,
-        appr_days: s.appr_days || 4,
-        actual_date: s.actual_date || '',
-        progress: s.progress || 0,
-        sharepoint: s.sharepoint || ''
-      }));
-      localStorage.setItem(STORAGE_SUB_DRAWINGS, JSON.stringify(subList));
-    }
+    localStorage.setItem(STORAGE_CUSTOM_DATES, JSON.stringify(allCustom));
+    localStorage.setItem(STORAGE_PROGRESS, JSON.stringify(allProg));
+    localStorage.setItem(STORAGE_ACTUAL_DATES, JSON.stringify(allAct));
+    localStorage.setItem(STORAGE_RESPONSIBLE, JSON.stringify(allResp));
+    localStorage.setItem(STORAGE_SHAREPOINT, JSON.stringify(allSp));
 
     updateSchedule();
     if (!silent) {
-      showToast(`☁️ ดึงข้อมูลล่าสุดจาก Cloud เรียบร้อยแล้ว (${dwgs ? dwgs.length : 0} รายการ)`);
+      showToast(`☁️ ดึงข้อมูลล่าสุดจาก Cloud เรียบร้อยแล้ว (${Object.keys(allProg).length} แบบมีความคืบหน้า, ${subList.length} แบบย่อย)`);
     }
   } catch (err) {
     if (!silent) alert('เกิดข้อผิดพลาดในการดึงข้อมูล: ' + err.message);
