@@ -5438,7 +5438,7 @@ function renderPrintSCurve() {
           if (actDate && actDate <= mEnd) actSum += 100;
         } else {
           const prog = getStoredProgress(d.dwg_no);
-          if (mEnd <= TODAY_DATE) actSum += prog;
+          if (m.start <= TODAY_DATE) actSum += prog;
         }
       });
       const planPct = Math.min(100, Math.round((planCount / totalDwgs) * 100));
@@ -5450,8 +5450,10 @@ function renderPrintSCurve() {
     MONTHS.forEach(m => {
       const mDays = Math.round((m.end - m.start) / (1000 * 60 * 60 * 24)) + 1;
       const weekIntervals = [{ name: 'W1', e: 7 }, { name: 'W2', e: 14 }, { name: 'W3', e: 21 }, { name: 'W4', e: 28 }, { name: 'W5', e: mDays }];
-      weekIntervals.forEach(w => {
+      weekIntervals.forEach((w, wIdx) => {
+        const sDay = wIdx === 0 ? 1 : weekIntervals[wIdx - 1].e + 1;
         const eDay = Math.min(w.e, mDays);
+        const wStart = new Date(m.start.getFullYear(), m.start.getMonth(), sDay);
         const wDate = new Date(m.start.getFullYear(), m.start.getMonth(), eDay);
         let planCount = 0;
         let actSum = 0;
@@ -5464,11 +5466,11 @@ function renderPrintSCurve() {
             if (actDate && actDate <= wDate) actSum += 100;
           } else {
             const prog = getStoredProgress(d.dwg_no);
-            if (wDate <= TODAY_DATE) actSum += prog;
+            if (wStart <= TODAY_DATE) actSum += prog;
           }
         });
         const planPct = Math.min(100, Math.round((planCount / totalDwgs) * 100));
-        const actPct = wDate <= TODAY_DATE ? Math.min(100, Math.round(actSum / totalDwgs)) : null;
+        const actPct = wStart <= TODAY_DATE ? Math.min(100, Math.round(actSum / totalDwgs)) : null;
         curvePoints.push({ label: `${m.label.split(' ')[0]} ${w.name}`, planPct: planPct, actPct: actPct });
       });
     });
@@ -6727,7 +6729,7 @@ function calculateAndRenderSCurve() {
           if (actDate && actDate <= mEnd) actSum += 100;
         } else {
           const prog = getStoredProgress(d.dwg_no);
-          if (mEnd <= TODAY_DATE) actSum += prog;
+          if (m.start <= TODAY_DATE) actSum += prog;
         }
       });
 
