@@ -7079,7 +7079,25 @@ function updateCloudStatusUI(status, errorMsg = '') {
   }
 }
 
+function purgeLegacyTestRecordsFromLocal() {
+  const legacyIds = new Set(['PC-ABCD', 'SHOP-M51-01', 'SHOP-M21-01', 'CC-A-1001-01', 'CC-A-1001-02']);
+  try {
+    const subs = getStoredSubDrawings();
+    const filtered = subs.filter(s => !legacyIds.has(s.dwg_no) && !legacyIds.has(s.id) && !legacyIds.has(s.sub_id));
+    if (filtered.length !== subs.length) {
+      saveStoredSubDrawings(filtered);
+    }
+    [STORAGE_CUSTOM_DATES, STORAGE_PROGRESS, STORAGE_ACTUAL_DATES, STORAGE_RESPONSIBLE, STORAGE_SHAREPOINT].forEach(k => {
+      const m = JSON.parse(localStorage.getItem(k) || '{}');
+      let chg = false;
+      legacyIds.forEach(id => { if (m[id] !== undefined) { delete m[id]; chg = true; } });
+      if (chg) localStorage.setItem(k, JSON.stringify(m));
+    });
+  } catch (e) {}
+}
+
 function initSupabase() {
+  purgeLegacyTestRecordsFromLocal();
   const savedUrl = (localStorage.getItem(STORAGE_SUPABASE_URL) || DEFAULT_SUPABASE_URL).trim();
   const savedKey = (localStorage.getItem(STORAGE_SUPABASE_KEY) || DEFAULT_SUPABASE_KEY).trim();
 
