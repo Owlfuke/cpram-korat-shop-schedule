@@ -5371,7 +5371,8 @@ function renderPrintSCurve() {
     else draftingCount++;
 
     const aheadDelay = getAheadDelayInfo(submitDate, actDateStr, prog);
-    if (aheadDelay.badgeClass === 'badge-ahead') aheadCount++;
+    const compDate = actDateStr ? (parseDate(actDateStr) || TODAY_DATE) : TODAY_DATE;
+    if (aheadDelay.badgeClass === 'badge-ahead' || (prog >= 100 && submitDate && compDate < submitDate)) aheadCount++;
     else if (aheadDelay.badgeClass === 'badge-delayed') delayedCount++;
     else ontrackCount++;
   });
@@ -6714,7 +6715,8 @@ function calculateAndRenderSCurve() {
     else draftingCount++;
 
     const aheadDelay = getAheadDelayInfo(submitDate, actDateStr, prog);
-    if (aheadDelay.badgeClass === 'badge-ahead') aheadCount++;
+    const compDate = actDateStr ? (parseDate(actDateStr) || TODAY_DATE) : TODAY_DATE;
+    if (aheadDelay.badgeClass === 'badge-ahead' || (prog >= 100 && submitDate && compDate < submitDate)) aheadCount++;
     else if (aheadDelay.badgeClass === 'badge-delayed') delayedCount++;
     else ontrackCount++;
   });
